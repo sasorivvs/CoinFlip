@@ -8,27 +8,6 @@ import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeE
 
 import "./ChainSpecificUtil.sol";
 
-interface IBankRoll {
-    function getIsGame(address game) external view returns (bool);
-
-    function getIsValidWager(
-        address game,
-        address tokenAddress
-    ) external view returns (bool);
-
-    function transferPayout(
-        address player,
-        uint256 payout,
-        address token
-    ) external;
-
-    function getOwner() external view returns (address);
-
-    function isPlayerSuspended(
-        address player
-    ) external view returns (bool, uint256);
-}
-
 interface IVRFCoordinatorV2 is VRFCoordinatorV2Interface {
     function getFeeConfig()
         external
@@ -49,21 +28,32 @@ interface IVRFCoordinatorV2 is VRFCoordinatorV2Interface {
 contract Common is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    constructor(bytes32 _keyHash, uint64 subscriptionID, address _owner) {
+        keyHash = _keyHash;
+        subID = subscriptionID;
+        owner = _owner;
+    }
+
     uint256 public VRFFees;
+    uint64 public subID;
     address public ChainLinkVRF;
-    address public _trustedForwarder;
+    address public owner;
+    bytes32 public keyHash;
 
     AggregatorV3Interface public LINK_ETH_FEED;
     IVRFCoordinatorV2 public IChainLinkVRF;
-    IBankRoll public Bankroll;
 
-    error NotApprovedBankroll();
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
     error InvalidValue(uint256 required, uint256 sent);
     error TransferFailed();
     error RefundFailed();
     error NotOwner(address want, address have);
     error ZeroWager();
-    error PlayerSuspended(uint256 suspensionTime);
+    error InvalidToken();
 
     /**
      * @dev function to transfer the player wager to bankroll, and charge for VRF fee
@@ -76,22 +66,12 @@ contract Common is ReentrancyGuard {
         address tokenAddress,
         uint256 wager,
         uint256 gasAmount,
-        uint256 l1Multiplier,
         address msgSender
     ) internal returns (uint256 VRFfee) {
-        if (!Bankroll.getIsValidWager(address(this), tokenAddress)) {
-            revert NotApprovedBankroll();
-        }
         if (wager == 0) {
             revert ZeroWager();
         }
-        (bool suspended, uint256 suspendedTime) = Bankroll.isPlayerSuspended(
-            msgSender
-        );
-        if (suspended) {
-            revert PlayerSuspended(suspendedTime);
-        }
-        VRFfee = getVRFFee(gasAmount, l1Multiplier);
+        VRFfee = getVRFFee(gasAmount);
 
         if (tokenAddress == address(0)) {
             if (msg.value < wager + VRFfee) {
@@ -115,44 +95,17 @@ contract Common is ReentrancyGuard {
     }
 
     /**
-     * @dev function to transfer the wager held by the game contract to the bankroll
-     * @param tokenAddress address of the token to transfer
-     * @param amount token amount to transfer
-     */
-    function _transferToBankroll(
-        address tokenAddress,
-        uint256 amount
-    ) internal {
-        if (tokenAddress == address(0)) {
-            (bool success, ) = payable(address(Bankroll)).call{value: amount}(
-                ""
-            );
-            if (!success) {
-                revert RefundFailed();
-            }
-        } else {
-            IERC20(tokenAddress).safeTransfer(address(Bankroll), amount);
-        }
-    }
-
-    /**
      * @dev calculates in form of native token the fee charged by chainlink VRF
      * @return fee amount of fee user has to pay
      */
-    function getVRFFee(
-        uint256 gasAmount,
-        uint256 l1Multiplier
-    ) public view returns (uint256 fee) {
+    function getVRFFee(uint256 gasAmount) public view returns (uint256 fee) {
         (, int256 answer, , , ) = LINK_ETH_FEED.latestRoundData();
         (uint32 fulfillmentFlatFeeLinkPPMTier1, , , , , , , , ) = IChainLinkVRF
             .getFeeConfig();
 
-        uint256 l1CostWei = (ChainSpecificUtil.getCurrentTxL1GasFees() *
-            l1Multiplier) / 10;
         fee =
             tx.gasprice *
-            (gasAmount) +
-            l1CostWei +
+            ((15 * gasAmount) / 10) +
             ((1e12 *
                 uint256(fulfillmentFlatFeeLinkPPMTier1) *
                 uint256(answer)) / 1e18);
@@ -175,11 +128,8 @@ contract Common is ReentrancyGuard {
     /**
      * @dev function to charge user for VRF
      */
-    function _payVRFFee(
-        uint256 gasAmount,
-        uint256 l1Multiplier
-    ) internal returns (uint256 VRFfee) {
-        VRFfee = getVRFFee(gasAmount, l1Multiplier);
+    function _payVRFFee(uint256 gasAmount) internal returns (uint256 VRFfee) {
+        VRFfee = getVRFFee(gasAmount);
         if (msg.value < VRFfee) {
             revert InvalidValue(VRFfee, msg.value);
         }
@@ -188,43 +138,15 @@ contract Common is ReentrancyGuard {
     }
 
     /**
-     * @dev function to transfer VRF fees acumulated in the contract to the Bankroll
+     * @dev function to transfer VRF fees acumulated in the contract
      * Can only be called by owner
      */
-    function transferFees(address to) external nonReentrant {
-        if (msg.sender != Bankroll.getOwner()) {
-            revert NotOwner(Bankroll.getOwner(), msg.sender);
-        }
+    function transferFees(address to) external nonReentrant onlyOwner {
         uint256 fee = VRFFees;
         VRFFees = 0;
-        (bool success, ) = payable(address(to)).call{value: fee}("");
+        (bool success, ) = payable(to).call{value: fee}("");
         if (!success) {
             revert TransferFailed();
-        }
-    }
-
-    /**
-     * @dev function to transfer wager to game contract, without charging for VRF
-     * @param tokenAddress tokenAddress the wager is made on
-     * @param wager wager amount
-     */
-    function _transferWagerPvPNoVRF(
-        address tokenAddress,
-        uint256 wager
-    ) internal {
-        if (!Bankroll.getIsValidWager(address(this), tokenAddress)) {
-            revert NotApprovedBankroll();
-        }
-        if (tokenAddress == address(0)) {
-            if (!(msg.value == wager)) {
-                revert InvalidValue(wager, msg.value);
-            }
-        } else {
-            IERC20(tokenAddress).safeTransferFrom(
-                msg.sender,
-                address(this),
-                wager
-            );
         }
     }
 
@@ -238,11 +160,7 @@ contract Common is ReentrancyGuard {
         uint256 wager,
         uint256 gasAmount
     ) internal {
-        if (!Bankroll.getIsValidWager(address(this), tokenAddress)) {
-            revert NotApprovedBankroll();
-        }
-
-        uint256 VRFfee = getVRFFee(gasAmount, 20);
+        uint256 VRFfee = getVRFFee(gasAmount);
         if (tokenAddress == address(0)) {
             if (msg.value < wager + VRFfee) {
                 revert InvalidValue(wager, msg.value);
@@ -270,7 +188,7 @@ contract Common is ReentrancyGuard {
      * @param payout amount of payout to transfer
      * @param tokenAddress address of the token that payout will be transfered
      */
-    function _transferPayoutPvP(
+    function _transferPayout(
         address player,
         uint256 payout,
         address tokenAddress
@@ -291,33 +209,18 @@ contract Common is ReentrancyGuard {
      * @param tokenAddress address of token to transfer
      */
     function _transferHouseEdgePvP(
+        address to,
         uint256 amount,
         address tokenAddress
     ) internal {
         if (tokenAddress == address(0)) {
-            (bool success, ) = payable(address(Bankroll)).call{value: amount}(
-                ""
-            );
+            (bool success, ) = payable(to).call{value: amount}("");
             if (!success) {
                 revert TransferFailed();
             }
         } else {
-            IERC20(tokenAddress).safeTransfer(address(Bankroll), amount);
+            IERC20(tokenAddress).safeTransfer(to, amount);
         }
-    }
-
-    /**
-     * @dev function to request bankroll to give payout to player
-     * @param player address of the player
-     * @param payout amount of payout to give
-     * @param tokenAddress address of the token in which to give the payout
-     */
-    function _transferPayout(
-        address player,
-        uint256 payout,
-        address tokenAddress
-    ) internal {
-        Bankroll.transferPayout(player, payout, tokenAddress);
     }
 
     /**
@@ -328,16 +231,6 @@ contract Common is ReentrancyGuard {
         uint32 numWords
     ) internal returns (uint256 s_requestId) {
         s_requestId = VRFCoordinatorV2Interface(ChainLinkVRF)
-            .requestRandomWords(
-                0x08ba8f62ff6c40a58877a106147661db43bc58dabfb814793847a839aa03367f,
-                53,
-                1,
-                2500000,
-                numWords
-            );
-    }
-
-    function _msgSender() internal view returns (address ret) {
-        ret = msg.sender;
+            .requestRandomWords(keyHash, subID, 1, 2500000, numWords);
     }
 }

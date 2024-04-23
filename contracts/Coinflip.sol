@@ -3,24 +3,21 @@ pragma solidity ^0.8.0;
 
 import "./Common.sol";
 
-/**
- * @title Coin Flip game, players predict if outcome will be heads or tails
- */
-
 contract CoinFlip is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _bankroll,
         address _vrf,
+        uint64 subscriptionID,
+        bytes32 keyHash,
         address link_eth_feed,
-        address _forwarder
-    ) {
-        Bankroll = IBankRoll(_bankroll);
+        address tokenAllowed,
+        address _owner
+    ) Common(keyHash, subscriptionID, _owner) {
         IChainLinkVRF = IVRFCoordinatorV2(_vrf);
         LINK_ETH_FEED = AggregatorV3Interface(link_eth_feed);
         ChainLinkVRF = _vrf;
-        _trustedForwarder = _forwarder;
+        isTokenAllowed[tokenAllowed] = true;
     }
 
     struct CoinFlipGame {
@@ -36,6 +33,7 @@ contract CoinFlip is Common {
 
     mapping(address => CoinFlipGame) coinFlipGames;
     mapping(uint256 => address) coinIDs;
+    mapping(address => bool) isTokenAllowed;
 
     /**
      * @dev event emitted at the start of the game
@@ -123,9 +121,8 @@ contract CoinFlip is Common {
         uint256 stopGain,
         uint256 stopLoss
     ) external payable nonReentrant {
-        address msgSender = _msgSender();
-        if (coinFlipGames[msgSender].requestID != 0) {
-            revert AwaitingVRF(coinFlipGames[msgSender].requestID);
+        if (coinFlipGames[msg.sender].requestID != 0) {
+            revert AwaitingVRF(coinFlipGames[msg.sender].requestID);
         }
         if (!(numBets > 0 && numBets <= 100)) {
             revert InvalidNumBets(100);
@@ -136,13 +133,12 @@ contract CoinFlip is Common {
             tokenAddress,
             wager * numBets,
             700000,
-            22,
-            msgSender
+            msg.sender
         );
 
         uint256 id = _requestRandomWords(numBets);
 
-        coinFlipGames[msgSender] = CoinFlipGame(
+        coinFlipGames[msg.sender] = CoinFlipGame(
             wager,
             stopGain,
             stopLoss,
@@ -152,10 +148,10 @@ contract CoinFlip is Common {
             numBets,
             isHeads
         );
-        coinIDs[id] = msgSender;
+        coinIDs[id] = msg.sender;
 
         emit CoinFlip_Play_Event(
-            msgSender,
+            msg.sender,
             wager,
             tokenAddress,
             isHeads,
@@ -170,8 +166,7 @@ contract CoinFlip is Common {
      * @dev Function to refund user in case of VRF request failling
      */
     function CoinFlip_Refund() external nonReentrant {
-        address msgSender = _msgSender();
-        CoinFlipGame storage game = coinFlipGames[msgSender];
+        CoinFlipGame storage game = coinFlipGames[msg.sender];
         if (game.requestID == 0) {
             revert NotAwaitingVRF();
         }
@@ -183,17 +178,17 @@ contract CoinFlip is Common {
         address tokenAddress = game.tokenAddress;
 
         delete (coinIDs[game.requestID]);
-        delete (coinFlipGames[msgSender]);
+        delete (coinFlipGames[msg.sender]);
 
         if (tokenAddress == address(0)) {
-            (bool success, ) = payable(msgSender).call{value: wager}("");
+            (bool success, ) = payable(msg.sender).call{value: wager}("");
             if (!success) {
                 revert TransferFailed();
             }
         } else {
-            IERC20(tokenAddress).safeTransfer(msgSender, wager);
+            IERC20(tokenAddress).safeTransfer(msg.sender, wager);
         }
-        emit CoinFlip_Refund_Event(msgSender, wager, tokenAddress);
+        emit CoinFlip_Refund_Event(msg.sender, wager, tokenAddress);
     }
 
     /**
@@ -264,7 +259,6 @@ contract CoinFlip is Common {
             payouts,
             i
         );
-        _transferToBankroll(tokenAddress, game.wager * game.numBets);
         delete (coinIDs[requestId]);
         delete (coinFlipGames[playerAddress]);
         if (payout != 0) {
@@ -278,11 +272,14 @@ contract CoinFlip is Common {
     function _kellyWager(uint256 wager, address tokenAddress) internal view {
         uint256 balance;
         if (tokenAddress == address(0)) {
-            balance = address(Bankroll).balance;
+            balance = address(this).balance;
         } else {
-            balance = IERC20(tokenAddress).balanceOf(address(Bankroll));
+            if (isTokenAllowed[tokenAddress] == false) {
+                revert InvalidToken();
+            }
+            balance = IERC20(tokenAddress).balanceOf(address(this));
         }
-        uint256 maxWager = (balance * 1122448) / 100000000;
+        uint256 maxWager = (balance * 5) / 100;
         if (wager > maxWager) {
             revert WagerAboveLimit(wager, maxWager);
         }
