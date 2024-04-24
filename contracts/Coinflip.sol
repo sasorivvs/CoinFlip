@@ -275,7 +275,7 @@ contract CoinFlip is Common {
             }
             balance = IERC20(tokenAddress).balanceOf(address(this));
         }
-        uint256 maxWager = (balance * 50) / 100;
+        uint256 maxWager = (balance * 5) / 100;
         if (wager > maxWager) {
             revert WagerAboveLimit(wager, maxWager);
         }
