@@ -6,7 +6,6 @@ import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.so
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import "./ChainSpecificUtil.sol";
 
 interface IVRFCoordinatorV2 is VRFCoordinatorV2Interface {
     function getFeeConfig()
@@ -25,23 +24,39 @@ interface IVRFCoordinatorV2 is VRFCoordinatorV2Interface {
         );
 }
 
+
 contract Common is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    constructor(bytes32 _keyHash, uint64 subscriptionID, address _owner) {
-        keyHash = _keyHash;
-        subID = subscriptionID;
-        owner = _owner;
+
+    constructor(
+        uint64 subscriptionId,address link_eth_feed,address _vrf,bytes32 _keyHash
+    )
+
+    {
+        COORDINATOR = IVRFCoordinatorV2(
+            _vrf
+        );
+        LINK_ETH_FEED = AggregatorV3Interface(link_eth_feed);
+        s_subscriptionId = subscriptionId;
+        owner = msg.sender;
+        keyHash=_keyHash;
     }
 
     uint256 public VRFFees;
-    uint64 public subID;
-    address public ChainLinkVRF;
+    uint64 public s_subscriptionId;
     address public owner;
-    bytes32 public keyHash;
+   
+   
+    bytes32 internal keyHash;
+    uint32 internal callbackGasLimit = 2500000;
+    uint16 internal requestConfirmations = 3;
+    
+
+
 
     AggregatorV3Interface public LINK_ETH_FEED;
-    IVRFCoordinatorV2 public IChainLinkVRF;
+    IVRFCoordinatorV2 public COORDINATOR;
 
     modifier onlyOwner() {
         require(msg.sender == owner);
@@ -72,7 +87,6 @@ contract Common is ReentrancyGuard {
             revert ZeroWager();
         }
         VRFfee = getVRFFee(gasAmount);
-
         if (tokenAddress == address(0)) {
             if (msg.value < wager + VRFfee) {
                 revert InvalidValue(wager + VRFfee, msg.value);
@@ -100,16 +114,18 @@ contract Common is ReentrancyGuard {
      */
     function getVRFFee(uint256 gasAmount) public view returns (uint256 fee) {
         (, int256 answer, , , ) = LINK_ETH_FEED.latestRoundData();
-        (uint32 fulfillmentFlatFeeLinkPPMTier1, , , , , , , , ) = IChainLinkVRF
+        (uint32 fulfillmentFlatFeeLinkPPMTier1, , , , , , , , ) =COORDINATOR
             .getFeeConfig();
 
         fee =
             tx.gasprice *
-            ((15 * gasAmount) / 10) +
+            ((22 * gasAmount) / 10) +
             ((1e12 *
                 uint256(fulfillmentFlatFeeLinkPPMTier1) *
                 uint256(answer)) / 1e18);
     }
+
+
 
     /**
      * @dev returns to user the excess fee sent to pay for the VRF
@@ -126,18 +142,6 @@ contract Common is ReentrancyGuard {
     }
 
     /**
-     * @dev function to charge user for VRF
-     */
-    function _payVRFFee(uint256 gasAmount) internal returns (uint256 VRFfee) {
-        VRFfee = getVRFFee(gasAmount);
-        if (msg.value < VRFfee) {
-            revert InvalidValue(VRFfee, msg.value);
-        }
-        _refundExcessValue(msg.value - VRFfee);
-        VRFFees += VRFfee;
-    }
-
-    /**
      * @dev function to transfer VRF fees acumulated in the contract
      * Can only be called by owner
      */
@@ -150,37 +154,6 @@ contract Common is ReentrancyGuard {
         }
     }
 
-    /**
-     * @dev function to transfer wager to game contract, including charge for VRF
-     * @param tokenAddress tokenAddress the wager is made on
-     * @param wager wager amount
-     */
-    function _transferWagerPvP(
-        address tokenAddress,
-        uint256 wager,
-        uint256 gasAmount
-    ) internal {
-        uint256 VRFfee = getVRFFee(gasAmount);
-        if (tokenAddress == address(0)) {
-            if (msg.value < wager + VRFfee) {
-                revert InvalidValue(wager, msg.value);
-            }
-
-            _refundExcessValue(msg.value - (VRFfee + wager));
-        } else {
-            if (msg.value < VRFfee) {
-                revert InvalidValue(VRFfee, msg.value);
-            }
-
-            IERC20(tokenAddress).safeTransferFrom(
-                msg.sender,
-                address(this),
-                wager
-            );
-            _refundExcessValue(msg.value - VRFfee);
-        }
-        VRFFees += VRFfee;
-    }
 
     /**
      * @dev transfers payout from the game contract to the players
@@ -223,14 +196,17 @@ contract Common is ReentrancyGuard {
         }
     }
 
-    /**
-     * @dev function to send the request for randomness to chainlink
-     * @param numWords number of random numbers required
-     */
-    function _requestRandomWords(
-        uint32 numWords
-    ) internal returns (uint256 s_requestId) {
-        s_requestId = VRFCoordinatorV2Interface(ChainLinkVRF)
-            .requestRandomWords(keyHash, subID, 1, 2500000, numWords);
+    function _requestRandomWords(uint32 numWords)
+        internal
+        returns (uint256 requestId)
+    {
+        requestId = COORDINATOR.requestRandomWords(
+            keyHash,
+            s_subscriptionId,
+            requestConfirmations,
+            callbackGasLimit,
+            numWords
+        );
+        return requestId;
     }
 }

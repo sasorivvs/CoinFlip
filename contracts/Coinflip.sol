@@ -7,16 +7,12 @@ contract CoinFlip is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _vrf,
         uint64 subscriptionID,
-        bytes32 keyHash,
+        address _vrf,
+        bytes32 _keyHash,
         address link_eth_feed,
-        address tokenAllowed,
-        address _owner
-    ) Common(keyHash, subscriptionID, _owner) {
-        IChainLinkVRF = IVRFCoordinatorV2(_vrf);
-        LINK_ETH_FEED = AggregatorV3Interface(link_eth_feed);
-        ChainLinkVRF = _vrf;
+        address tokenAllowed
+    ) Common(subscriptionID, link_eth_feed, _vrf, _keyHash) {
         isTokenAllowed[tokenAllowed] = true;
     }
 
@@ -200,8 +196,8 @@ contract CoinFlip is Common {
         uint256 requestId,
         uint256[] memory randomWords
     ) external {
-        if (msg.sender != ChainLinkVRF) {
-            revert OnlyCoordinatorCanFulfill(msg.sender, ChainLinkVRF);
+        if (msg.sender != address(COORDINATOR)) {
+            revert OnlyCoordinatorCanFulfill(msg.sender, address(COORDINATOR));
         }
         fulfillRandomWords(requestId, randomWords);
     }
@@ -213,7 +209,7 @@ contract CoinFlip is Common {
         address playerAddress = coinIDs[requestId];
         if (playerAddress == address(0)) revert();
         CoinFlipGame storage game = coinFlipGames[playerAddress];
-
+        if (block.number > game.blockNumber + 200) revert();
         int256 totalValue;
         uint256 payout;
         uint32 i;
@@ -279,9 +275,22 @@ contract CoinFlip is Common {
             }
             balance = IERC20(tokenAddress).balanceOf(address(this));
         }
-        uint256 maxWager = (balance * 5) / 100;
+        uint256 maxWager = (balance * 50) / 100;
         if (wager > maxWager) {
             revert WagerAboveLimit(wager, maxWager);
         }
+    }
+
+    event Received(address, uint);
+
+    receive() external payable {
+        emit Received(msg.sender, msg.value);
+    }
+
+    function withdrawHouseHedge(
+        uint amount,
+        address tokenAddress
+    ) external onlyOwner {
+        _transferHouseEdgePvP(msg.sender, amount, tokenAddress);
     }
 }
