@@ -6,13 +6,18 @@ import "./Common.sol";
 contract CoinFlip is Common {
     using SafeERC20 for IERC20;
 
+    mapping(address => CoinFlipGame) coinFlipGames;
+    mapping(uint256 => address) coinIDs;
+    mapping(address => bool) isTokenAllowed;
+
     constructor(
         uint64 subscriptionID,
         address _vrf,
         bytes32 _keyHash,
         address link_eth_feed,
-        address tokenAllowed
-    ) Common(subscriptionID, link_eth_feed, _vrf, _keyHash) {
+        address tokenAllowed,
+        address wrappedToken
+    ) Common(subscriptionID, link_eth_feed, _vrf, _keyHash, wrappedToken) {
         isTokenAllowed[tokenAllowed] = true;
     }
 
@@ -26,10 +31,6 @@ contract CoinFlip is Common {
         uint32 numBets;
         bool isHeads;
     }
-
-    mapping(address => CoinFlipGame) coinFlipGames;
-    mapping(uint256 => address) coinIDs;
-    mapping(address => bool) isTokenAllowed;
 
     /**
      * @dev event emitted at the start of the game
@@ -51,6 +52,7 @@ contract CoinFlip is Common {
         uint256 stopLoss,
         uint256 VRFFee
     );
+
     /**
      * @dev event emitted by the VRF callback with the bet results
      * @param playerAddress address of the player that made the bet
@@ -73,7 +75,7 @@ contract CoinFlip is Common {
 
     /**
      * @dev event emitted when a refund is done in coin flip
-     * @param player address of the player reciving the refund
+     * @param player address of the player receiving the refund
      * @param wager amount of wager that was refunded
      * @param tokenAddress address of token the refund was made in
      */
@@ -83,10 +85,19 @@ contract CoinFlip is Common {
         address tokenAddress
     );
 
-    event Transfer_Ownership_Event(
-        address indexed prevOwner,
-        address indexed newOwner
-    );
+    /**
+     * @dev event emitted when a transfer of ownership is done
+     * @param prevOwner address of the previous owner
+     * @param newOwner address of the new owner
+     */
+    event Transfer_Ownership_Event(address prevOwner, address newOwner);
+
+    /**
+     * @dev event emitted when the contract was funded with native currency
+     * @param sender refill address
+     * @param amount refill amount
+     */
+    event Received(address sender, uint amount);
 
     error WagerAboveLimit(uint256 wager, uint256 maxWager);
     error AwaitingVRF(uint256 requestID);
@@ -95,14 +106,8 @@ contract CoinFlip is Common {
     error BlockNumberTooLow(uint256 have, uint256 want);
     error OnlyCoordinatorCanFulfill(address have, address want);
 
-    /**
-     * @dev function to get current request player is await from VRF, returns 0 if none
-     * @param player address of the player to get the state
-     */
-    function CoinFlip_GetState(
-        address player
-    ) external view returns (CoinFlipGame memory) {
-        return (coinFlipGames[player]);
+    receive() external payable {
+        emit Received(msg.sender, msg.value);
     }
 
     /**
@@ -171,8 +176,8 @@ contract CoinFlip is Common {
         if (game.requestID == 0) {
             revert NotAwaitingVRF();
         }
-        if (game.blockNumber + 200 > block.number) {
-            revert BlockNumberTooLow(block.number, game.blockNumber + 200);
+        if (game.blockNumber + 100 > block.number) {
+            revert BlockNumberTooLow(block.number, game.blockNumber + 100);
         }
 
         uint256 wager = game.wager * game.numBets;
@@ -190,6 +195,50 @@ contract CoinFlip is Common {
             IERC20(tokenAddress).safeTransfer(msg.sender, wager);
         }
         emit CoinFlip_Refund_Event(msg.sender, wager, tokenAddress);
+    }
+
+    /**
+     * @dev transfers house edge from game contract
+     * Can only be called by owner
+     * @param to address to transfer the house edge to
+     * @param amount amount to transfer
+     * @param tokenAddress address of token to transfer
+     */
+    function withdrawHouseEdge(
+        address to,
+        uint amount,
+        address tokenAddress
+    ) external onlyOwner {
+        _transferHouseEdgePvP(to, amount, tokenAddress);
+    }
+
+    /**
+     * @dev function to transfer ownership
+     * Can only be called by owner
+     * @param newOwner new owner address
+     */
+    function transferOwnership(address newOwner) external onlyOwner {
+        emit Transfer_Ownership_Event(owner, newOwner);
+        _transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev function to change Chainlink VRF subscription ID
+     * Can only be called by owner
+     * @param _subscriptionId new Chainlink VRF subscription ID
+     */
+    function changeSubscription(uint64 _subscriptionId) external onlyOwner {
+        _changeSubscription(_subscriptionId);
+    }
+
+    /**
+     * @dev function to get current request player is await from VRF, returns 0 if none
+     * @param player address of the player to get the state
+     */
+    function CoinFlip_GetState(
+        address player
+    ) external view returns (CoinFlipGame memory) {
+        return (coinFlipGames[player]);
     }
 
     /**
@@ -284,23 +333,5 @@ contract CoinFlip is Common {
         if (wager > maxWager) {
             revert WagerAboveLimit(wager, maxWager);
         }
-    }
-
-    event Received(address, uint);
-
-    receive() external payable {
-        emit Received(msg.sender, msg.value);
-    }
-
-    function withdrawHouseHedge(
-        uint amount,
-        address tokenAddress
-    ) external onlyOwner {
-        _transferHouseEdgePvP(msg.sender, amount, tokenAddress);
-    }
-
-    function transferOwnership(address newOwner) external onlyOwner {
-        emit Transfer_Ownership_Event(owner, newOwner);
-        _transferOwnership(newOwner);
     }
 }

@@ -26,29 +26,32 @@ interface IVRFCoordinatorV2 is VRFCoordinatorV2Interface {
 contract Common is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    uint256 public VRFFees;
+    uint64 public s_subscriptionId;
+    address public owner;
+    address public wrappedToken;
+
+    uint32 internal constant CALLBACK_GAS_LIMIT = 2500000;
+    uint16 internal constant REQUEST_CONFIRMATIONS = 3;
+
+    AggregatorV3Interface public immutable LINK_ETH_FEED;
+    IVRFCoordinatorV2 public immutable COORDINATOR;
+    bytes32 internal immutable KEY_HASH;
+
     constructor(
         uint64 subscriptionId,
         address link_eth_feed,
         address _vrf,
-        bytes32 _keyHash
+        bytes32 _keyHash,
+        address _wrappedToken
     ) {
         COORDINATOR = IVRFCoordinatorV2(_vrf);
         LINK_ETH_FEED = AggregatorV3Interface(link_eth_feed);
         s_subscriptionId = subscriptionId;
         owner = msg.sender;
-        keyHash = _keyHash;
+        KEY_HASH = _keyHash;
+        wrappedToken = _wrappedToken;
     }
-
-    uint256 public VRFFees;
-    uint64 public s_subscriptionId;
-    address public owner;
-
-    bytes32 internal keyHash;
-    uint32 internal callbackGasLimit = 2500000;
-    uint16 internal requestConfirmations = 3;
-
-    AggregatorV3Interface public LINK_ETH_FEED;
-    IVRFCoordinatorV2 public COORDINATOR;
 
     modifier onlyOwner() {
         require(msg.sender == owner);
@@ -63,10 +66,41 @@ contract Common is ReentrancyGuard {
     error InvalidToken();
 
     /**
-     * @dev function to transfer the player wager to bankroll, and charge for VRF fee
-     * , reverts if bankroll doesn't approve game or token
+     * @dev function to transfer VRF fees acumulated in the contract
+     * Can only be called by owner
+     */
+    function transferFees(address to) external nonReentrant onlyOwner {
+        uint256 fee = VRFFees;
+        VRFFees = 0;
+        (bool success, ) = payable(to).call{value: fee}("");
+        if (!success) {
+            revert TransferFailed();
+        }
+    }
+
+    /**
+     * @dev calculates in form of native token the fee charged by chainlink VRF
+     * @return fee amount of fee user has to pay
+     */
+    function getVRFFee(uint256 gasAmount) public view returns (uint256 fee) {
+        (, int256 answer, , , ) = LINK_ETH_FEED.latestRoundData();
+        (uint32 fulfillmentFlatFeeLinkPPMTier1, , , , , , , , ) = COORDINATOR
+            .getFeeConfig();
+
+        fee =
+            tx.gasprice *
+            ((18 * gasAmount) / 10) +
+            ((1e12 *
+                uint256(fulfillmentFlatFeeLinkPPMTier1) *
+                uint256(answer)) / 1e18);
+    }
+
+    /**
+     * @dev function to transfer the player wager to game contract
+     * , reverts if wager is zero
      * @param tokenAddress address of the token the wager is made on
      * @param wager total amount wagered
+     * @param msgSender player address
      */
 
     function _transferWager(
@@ -101,23 +135,6 @@ contract Common is ReentrancyGuard {
     }
 
     /**
-     * @dev calculates in form of native token the fee charged by chainlink VRF
-     * @return fee amount of fee user has to pay
-     */
-    function getVRFFee(uint256 gasAmount) public view returns (uint256 fee) {
-        (, int256 answer, , , ) = LINK_ETH_FEED.latestRoundData();
-        (uint32 fulfillmentFlatFeeLinkPPMTier1, , , , , , , , ) = COORDINATOR
-            .getFeeConfig();
-
-        fee =
-            tx.gasprice *
-            ((22 * gasAmount) / 10) +
-            ((1e12 *
-                uint256(fulfillmentFlatFeeLinkPPMTier1) *
-                uint256(answer)) / 1e18);
-    }
-
-    /**
      * @dev returns to user the excess fee sent to pay for the VRF
      * @param refund amount to send back to user
      */
@@ -128,19 +145,6 @@ contract Common is ReentrancyGuard {
         (bool success, ) = payable(msg.sender).call{value: refund}("");
         if (!success) {
             revert RefundFailed();
-        }
-    }
-
-    /**
-     * @dev function to transfer VRF fees acumulated in the contract
-     * Can only be called by owner
-     */
-    function transferFees(address to) external nonReentrant onlyOwner {
-        uint256 fee = VRFFees;
-        VRFFees = 0;
-        (bool success, ) = payable(to).call{value: fee}("");
-        if (!success) {
-            revert TransferFailed();
         }
     }
 
@@ -158,7 +162,13 @@ contract Common is ReentrancyGuard {
         if (tokenAddress == address(0)) {
             (bool success, ) = payable(player).call{value: payout}("");
             if (!success) {
-                revert TransferFailed();
+                (bool _success, ) = wrappedToken.call{value: payout}(
+                    abi.encodeWithSignature("deposit()")
+                );
+                if (!_success) {
+                    revert TransferFailed();
+                }
+                IERC20(wrappedToken).safeTransfer(player, payout);
             }
         } else {
             IERC20(tokenAddress).safeTransfer(player, payout);
@@ -166,7 +176,8 @@ contract Common is ReentrancyGuard {
     }
 
     /**
-     * @dev transfers house edge from game contract to bankroll
+     * @dev transfers house edge from game contract
+     * @param to address to transfer the house edge to
      * @param amount amount to transfer
      * @param tokenAddress address of token to transfer
      */
@@ -185,18 +196,34 @@ contract Common is ReentrancyGuard {
         }
     }
 
+    /**
+     * @dev function to transfer ownership
+     * @param newOwner new owner address
+     */
     function _transferOwnership(address newOwner) internal {
         owner = newOwner;
     }
 
+    /**
+     * @dev function to change Chainlink VRF subscription ID
+     * @param _subscriptionId new Chainlink VRF subscription ID
+     */
+    function _changeSubscription(uint64 _subscriptionId) internal {
+        s_subscriptionId = _subscriptionId;
+    }
+
+    /**
+     * @dev function to send the request for randomness to chainlink
+     * @param numWords number of random numbers required
+     */
     function _requestRandomWords(
         uint32 numWords
     ) internal returns (uint256 requestId) {
         requestId = COORDINATOR.requestRandomWords(
-            keyHash,
+            KEY_HASH,
             s_subscriptionId,
-            requestConfirmations,
-            callbackGasLimit,
+            REQUEST_CONFIRMATIONS,
+            CALLBACK_GAS_LIMIT,
             numWords
         );
         return requestId;
