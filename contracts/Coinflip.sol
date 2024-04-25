@@ -83,6 +83,11 @@ contract CoinFlip is Common {
         address tokenAddress
     );
 
+    event Transfer_Ownership_Event(
+        address indexed prevOwner,
+        address indexed newOwner
+    );
+
     error WagerAboveLimit(uint256 wager, uint256 maxWager);
     error AwaitingVRF(uint256 requestID);
     error InvalidNumBets(uint256 maxNumBets);
@@ -292,5 +297,10 @@ contract CoinFlip is Common {
         address tokenAddress
     ) external onlyOwner {
         _transferHouseEdgePvP(msg.sender, amount, tokenAddress);
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        emit Transfer_Ownership_Event(owner, newOwner);
+        _transferOwnership(newOwner);
     }
 }

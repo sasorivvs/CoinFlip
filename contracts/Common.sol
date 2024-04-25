@@ -6,7 +6,6 @@ import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.so
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-
 interface IVRFCoordinatorV2 is VRFCoordinatorV2Interface {
     function getFeeConfig()
         external
@@ -24,36 +23,29 @@ interface IVRFCoordinatorV2 is VRFCoordinatorV2Interface {
         );
 }
 
-
 contract Common is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-
     constructor(
-        uint64 subscriptionId,address link_eth_feed,address _vrf,bytes32 _keyHash
-    )
-
-    {
-        COORDINATOR = IVRFCoordinatorV2(
-            _vrf
-        );
+        uint64 subscriptionId,
+        address link_eth_feed,
+        address _vrf,
+        bytes32 _keyHash
+    ) {
+        COORDINATOR = IVRFCoordinatorV2(_vrf);
         LINK_ETH_FEED = AggregatorV3Interface(link_eth_feed);
         s_subscriptionId = subscriptionId;
         owner = msg.sender;
-        keyHash=_keyHash;
+        keyHash = _keyHash;
     }
 
     uint256 public VRFFees;
     uint64 public s_subscriptionId;
     address public owner;
-   
-   
+
     bytes32 internal keyHash;
     uint32 internal callbackGasLimit = 2500000;
     uint16 internal requestConfirmations = 3;
-    
-
-
 
     AggregatorV3Interface public LINK_ETH_FEED;
     IVRFCoordinatorV2 public COORDINATOR;
@@ -114,7 +106,7 @@ contract Common is ReentrancyGuard {
      */
     function getVRFFee(uint256 gasAmount) public view returns (uint256 fee) {
         (, int256 answer, , , ) = LINK_ETH_FEED.latestRoundData();
-        (uint32 fulfillmentFlatFeeLinkPPMTier1, , , , , , , , ) =COORDINATOR
+        (uint32 fulfillmentFlatFeeLinkPPMTier1, , , , , , , , ) = COORDINATOR
             .getFeeConfig();
 
         fee =
@@ -124,8 +116,6 @@ contract Common is ReentrancyGuard {
                 uint256(fulfillmentFlatFeeLinkPPMTier1) *
                 uint256(answer)) / 1e18);
     }
-
-
 
     /**
      * @dev returns to user the excess fee sent to pay for the VRF
@@ -153,7 +143,6 @@ contract Common is ReentrancyGuard {
             revert TransferFailed();
         }
     }
-
 
     /**
      * @dev transfers payout from the game contract to the players
@@ -196,10 +185,13 @@ contract Common is ReentrancyGuard {
         }
     }
 
-    function _requestRandomWords(uint32 numWords)
-        internal
-        returns (uint256 requestId)
-    {
+    function _transferOwnership(address newOwner) internal {
+        owner = newOwner;
+    }
+
+    function _requestRandomWords(
+        uint32 numWords
+    ) internal returns (uint256 requestId) {
         requestId = COORDINATOR.requestRandomWords(
             keyHash,
             s_subscriptionId,
