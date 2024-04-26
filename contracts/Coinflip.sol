@@ -263,7 +263,7 @@ contract CoinFlip is Common {
         address playerAddress = coinIDs[requestId];
         if (playerAddress == address(0)) revert();
         CoinFlipGame storage game = coinFlipGames[playerAddress];
-        if (block.number > game.blockNumber + 200) revert();
+        if (block.number > game.blockNumber + 100) revert();
         int256 totalValue;
         uint256 payout;
         uint32 i;

@@ -88,8 +88,8 @@ contract Common is ReentrancyGuard {
             .getFeeConfig();
 
         fee =
-            tx.gasprice *
-            ((18 * gasAmount) / 10) +
+            (tx.gasprice * 18 * gasAmount) /
+            10 +
             ((1e12 *
                 uint256(fulfillmentFlatFeeLinkPPMTier1) *
                 uint256(answer)) / 1e18);
