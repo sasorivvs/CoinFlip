@@ -8,7 +8,7 @@ contract CoinFlip is Common {
 
     mapping(address => CoinFlipGame) coinFlipGames;
     mapping(uint256 => address) coinIDs;
-    mapping(address => bool) isTokenAllowed;
+    mapping(address => bool) public isTokenAllowed;
 
     constructor(
         uint64 subscriptionID,
@@ -91,6 +91,32 @@ contract CoinFlip is Common {
      * @param newOwner address of the new owner
      */
     event Transfer_Ownership_Event(address prevOwner, address newOwner);
+
+    /**
+     * @dev event emitted when a change of subscription is done
+     * @param subID number of the previous subscription
+     * @param newSubID number of the new subscription
+     */
+    event Subscrition_Change_Event(uint64 subID, uint64 newSubID);
+
+    /**
+     * @dev event emitted when a setting of bet token is done
+     * @param token bet token address
+     * @param status true - bet token / false - token is not for betting
+     */
+    event Token_Set_Event(address token, bool status);
+
+    /**
+     * @dev event emitted when a withdrawal of token is done
+     * @param to address to transfer the house edge to
+     * @param amount amount to transfer
+     * @param tokenAddress address of token to transfer
+     */
+    event Withdraw_HouseEdge_Event(
+        address to,
+        uint amount,
+        address tokenAddress
+    );
 
     /**
      * @dev event emitted when the contract was funded with native currency
@@ -209,6 +235,7 @@ contract CoinFlip is Common {
         uint amount,
         address tokenAddress
     ) external onlyOwner {
+        emit Withdraw_HouseEdge_Event(to, amount, tokenAddress);
         _transferHouseEdgePvP(to, amount, tokenAddress);
     }
 
@@ -228,7 +255,19 @@ contract CoinFlip is Common {
      * @param _subscriptionId new Chainlink VRF subscription ID
      */
     function changeSubscription(uint64 _subscriptionId) external onlyOwner {
+        emit Subscrition_Change_Event(s_subscriptionId, _subscriptionId);
         _changeSubscription(_subscriptionId);
+    }
+
+    /**
+     * @dev function to add/remove bet token
+     *     Can only be called by owner
+     * @param token bet token address
+     * @param status true - bet token / false - token is not for betting
+     */
+    function setToken(address token, bool status) external onlyOwner {
+        emit Token_Set_Event(token, status);
+        isTokenAllowed[token] = status;
     }
 
     /**
@@ -329,7 +368,7 @@ contract CoinFlip is Common {
             }
             balance = IERC20(tokenAddress).balanceOf(address(this));
         }
-        uint256 maxWager = (balance * 5) / 100;
+        uint256 maxWager = (balance * 11) / 1000;
         if (wager > maxWager) {
             revert WagerAboveLimit(wager, maxWager);
         }

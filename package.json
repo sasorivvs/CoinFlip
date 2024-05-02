@@ -1,21 +1,55 @@
 {
-  "name": "coinflip",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "author": "",
-  "license": "ISC",
-  "devDependencies": {
-    "hardhat": "^2.22.3",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
-  },
-  "dependencies": {
-    "@chainlink/contracts": "^1.0.0",
-    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
-    "@openzeppelin/contracts": "^5.0.2"
-  }
+	"name": "testcoinflip",
+	"license": "MIT",
+	"version": "2.0.0",
+	"description": "A repo for boilerplate code for testing, deploying, and shipping chainlink solidity code.",
+	"scripts": {
+		"compile": "hardhat compile",
+		"test": "hardhat test test/unit/*.spec.js",
+		"test-staging": "hardhat test test/staging/*.spec.js --network sepolia",
+		"deploy": "hardhat run scripts/deployment/main.js",
+		"lint": "solhint 'contracts/*.sol'",
+		"lint:fix": "solhint 'contracts/**/*.sol' --fix",
+		"format": "prettier --write .",
+		"coverage": "hardhat coverage --solcoverjs ./.solcover.js",
+		"fuzzing": "docker run -it --rm -v $PWD:/src trailofbits/eth-security-toolbox"
+	},
+	"devDependencies": {
+		"@chainlink/contracts": "^0.5.1",
+		"@ethersproject/abi": "^5.7.0",
+		"@ethersproject/providers": "^5.7.2",
+		"@nomicfoundation/hardhat-chai-matchers": "^1.0.6",
+		"@nomicfoundation/hardhat-network-helpers": "^1.0.10",
+		"@nomicfoundation/hardhat-toolbox": "^2.0.2",
+		"@nomiclabs/hardhat-ethers": "^2.2.3",
+		"@nomiclabs/hardhat-etherscan": "^3.1.8",
+		"@typechain/ethers-v5": "^10.2.1",
+		"@typechain/hardhat": "^6.1.6",
+		"chai": "^4.4.1",
+		"ethers": "^5.7.2",
+		"hardhat": "^2.11.2",
+		"hardhat-gas-reporter": "^1.0.10",
+		"husky": "^8.0.1",
+		"lint-staged": "^13.0.3",
+		"prettier": "^2.7.1",
+		"prettier-plugin-solidity": "^1.0.0-beta.24",
+		"solhint": "^3.3.7",
+		"solhint-plugin-prettier": "^0.0.5",
+		"solidity-coverage": "^0.8.12",
+		"typechain": "^8.3.2"
+	},
+	"dependencies": {
+		"@nomicfoundation/hardhat-verify": "^2.0.6",
+		"dotenv": "^16.0.3",
+		"instead": "^1.0.3"
+	},
+	"lint-staged": {
+		"*.{js,json,yml,yaml}": [
+			"prettier --write"
+		],
+		"*.sol": [
+			"prettier --write",
+			"solhint"
+		]
+	}
 }
